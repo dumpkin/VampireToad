@@ -46,6 +46,9 @@ namespace GUI {
     // Основна функція відрисовки головного меню
     void drawMainMenu();
 
+    // Запустити діагностичний тест кнопок і дисплея
+    void runGuiTest();
+
     // Скинути стан кнопок і ігнорувати обробку на вказаний ms (щоб уникнути шуму при переходах)
     void resetButtonsAndIgnore(unsigned long ms);
 }

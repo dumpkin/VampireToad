@@ -11,5 +11,6 @@
 #include "GUI/gui_radar.h"
 #include "GUI/gui_wifi.h"
 #include "GUI/gui_ble.h"
+#include "GUI/gui_test.h"
 
 #endif

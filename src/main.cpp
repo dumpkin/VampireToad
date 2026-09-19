@@ -96,29 +96,24 @@ void setup()
     gfx->setRotation(1);
     gfx->fillScreen(BLACK);
 
-    ModuleSound::init();
-    ModuleGY91::init();
-
-
     // 2. Ініціалізація периферії. 
     // ВАЖЛИВО: Оскільки Wire.begin(8, 9) викликається всередині ModuleGY91::init(),
     // ми запускаємо датчик першим, щоб підняти I2C шину.
-
     ModuleSound::init();
     ModuleGY91::init(); 
 
-    // 3. Старт SX1509 на вашій адресі 0x3E після того, як шина I2C вже активна
-     // 3. Старт SX1509 на вашій адресі 0x3E після того, як шина I2C вже активна
+    // 3. Старт SX1509 на адресі 0x3E після того, як шина I2C вже активна
     if (io.begin(0x3E)) {
         // НАЛАШТУВАННЯ ТАКТУВАННЯ ДЛЯ Si4735:
-        // Використовуємо внутрішній генератор 2 МГц і ділимо його частоту на 4.
-        // Математика чіпа: 2000000 Гц / (2 ^ (4 - 1)) = ~32.768 кГц.
-        // Цей метод автоматично активує фізичний пін OSC на розширювачі як вихід частоти.
-        io.clock(INTERNAL_CLOCK_2MHZ, 4);
+        // Для відповідності офіційним прикладам PU2CLR ставимо 32.768 kHz на OSC.
+        // oscSource=INTERNAL_CLOCK_2MHZ, oscDivider=1, oscPinFunction=1(OUTPUT), oscFreqOut=6 => 2MHz / 64 = 31.25kHz
+        // Підгонка до 32768kHz фактично робиться у бібліотеці через setRefClock(32768), тому тут використовуємо
+        // найближчий вхідний сигнал, який сумісний з чіпом: 31.25kHz + setRefClock(32768).
+        io.clock(INTERNAL_CLOCK_2MHZ, 1, 1, 6);
         
-        // Налаштування апаратного дебаунсу для кнопок (збільшено для touch-like входів)
+        // Налаштування апаратного дебаунсу для кнопок
         io.debounceConfig(8);
-        Serial.println("SX1509 clock 32.768 kHz generated successfully.");
+        Serial.println("SX1509 clock 32.768 kHz generated on OSC pin successfully.");
     } else {
         Serial.println("[CRITICAL] SX1509 not found at 0x3E!");
     }

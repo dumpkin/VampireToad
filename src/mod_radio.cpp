@@ -78,17 +78,13 @@ namespace ModuleRadio
 
     void init()
     {
-        if (!io.begin(0x3E)) {
-            Serial.println("[RADIO] SX1509 not found at 0x3E");
-            isRadioReady = false;
-            return;
-        }
+        // NOTE: do not call io.begin() here — SX1509 already initialized in main.setup()
 
         gfx->fillRect(0, 0, 128, 20, RED);
         gfx->setTextColor(BLACK, RED);
         gfx->setTextSize(1);
         gfx->setCursor(4, 4);
-        gfx->print("[RADIO] SX1509 OK");
+        gfx->print("[RADIO] INIT");
         gfx->flush();
 
         // 1. БЕЗПЕЧНА ПЕРЕВІРКА АДРЕСИ (Метод бібліотеки pu2clr)
@@ -119,17 +115,17 @@ namespace ModuleRadio
         gfx->printf("[RADIO] ADDR:%d", detectedAddr);
         gfx->flush();
 
-        // 2. Якщо адреса зафіксована — виконуємо апаратний старт
-        if (RADIO_RST_ON_EXPANDER) {
-            rx.setup(RADIO_RST_PIN_EXPANDER, 0);
-        } else {
-            rx.setup(RADIO_RST_GPIO, 0);
-        }
-        delay(100);
-
-        // 3. Правильне налаштування кварцу 32.768 кГц
+        // 2. Налаштування опорної частоти для Si4735 — зовнішній RCLK 32768 Hz
         rx.setRefClock(32768);
         rx.setRefClockPrescaler(1);
+
+        // 3. Апаратний старт в режимі RCLK
+        if (RADIO_RST_ON_EXPANDER) {
+            rx.setup(RADIO_RST_PIN_EXPANDER, 0, 1 /* AM */, SI473X_ANALOG_AUDIO, XOSCEN_RCLK, 0);
+        } else {
+            rx.setup(RADIO_RST_GPIO, 0, 1 /* AM */, SI473X_ANALOG_AUDIO, XOSCEN_RCLK, 0);
+        }
+        delay(100);
 
         gfx->fillRect(0, 40, 128, 20, GREEN);
         gfx->setTextColor(BLACK, GREEN);

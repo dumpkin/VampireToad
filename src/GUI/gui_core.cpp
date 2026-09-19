@@ -5,6 +5,7 @@
 #include "gui_radar.h"
 #include "gui_wifi.h"
 #include "gui_ble.h"
+#include "gui_test.h"
 #include "mod_sound.h"
 #include "mod_gps.h"
 #include "mod_gy91.h"
@@ -17,6 +18,9 @@
 extern Arduino_GFX *gfx;
 extern SX1509 io; // Надаємо ядру графіки доступ до об'єкта з main.cpp
 
+namespace GUI {
+    void runGuiTest();
+}
 
 extern SX1509 io;
 
@@ -58,6 +62,7 @@ namespace GUI
     static unsigned long buttonPressStart[16];
     static bool buttonWasPressed[16];
     static bool holdTriggered[16];
+    static bool upDownTestLatched = false;
 
     // Скинути стан кнопок і встановити ігнор на ms мілісекунд
     void resetButtonsAndIgnore(unsigned long ms) {
@@ -65,6 +70,19 @@ namespace GUI
         buttonsIgnoreUntil = millis() + ms;
         // скидати джерела переривань, щоб уникнути накопичення
         io.interruptSource();
+        // відновити INPUT_PULLUP та апаратний дебаунс/переривання на випадок, якщо expander був скинутий
+        io.pinMode(BTN_UP, INPUT_PULLUP);
+        io.pinMode(BTN_DOWN, INPUT_PULLUP);
+        io.pinMode(BTN_OK, INPUT_PULLUP);
+        io.pinMode(BTN_BACK, INPUT_PULLUP);
+        io.debouncePin(BTN_UP);
+        io.debouncePin(BTN_DOWN);
+        io.debouncePin(BTN_OK);
+        io.debouncePin(BTN_BACK);
+        io.enableInterrupt(BTN_UP, CHANGE);
+        io.enableInterrupt(BTN_DOWN, CHANGE);
+        io.enableInterrupt(BTN_OK, CHANGE);
+        io.enableInterrupt(BTN_BACK, CHANGE);
     }
 
     MenuState getCurrentState() { return currentState; }
@@ -77,22 +95,25 @@ namespace GUI
     io.pinMode(BTN_OK, INPUT_PULLUP);
     io.pinMode(BTN_BACK, INPUT_PULLUP);
 
-    // Активуємо апаратний антибрязк чіпа саме на цих чотирьох каналах
-    io.debouncePin(BTN_UP);
-    io.debouncePin(BTN_DOWN);
-    io.debouncePin(BTN_OK);
-    io.debouncePin(BTN_BACK);
+     // Додатково встановлюємо підтяжку на пін переривання ESP (на всякий випадок)
+     pinMode(SX1509_INT_PIN, INPUT_PULLUP);
 
-    // Налаштовуємо генерацію переривання при будь-якій зміні рівня (натиснули/відпустили)
-    io.enableInterrupt(BTN_UP, CHANGE);
-    io.enableInterrupt(BTN_DOWN, CHANGE);
-    io.enableInterrupt(BTN_OK, CHANGE);
-    io.enableInterrupt(BTN_BACK, CHANGE);
+     // Активуємо апаратний антибрязк чіпа саме на цих чотирьох каналах
+     io.debouncePin(BTN_UP);
+     io.debouncePin(BTN_DOWN);
+     io.debouncePin(BTN_OK);
+     io.debouncePin(BTN_BACK);
 
-    // Нативний аналоговий пін батареї залишається без змін на процесорі
-    pinMode(1, INPUT);
-    analogSetAttenuation(ADC_11db);
-}
+     // Налаштовуємо генерацію переривання при будь-якій зміні рівня (натиснули/відпустили)
+     io.enableInterrupt(BTN_UP, CHANGE);
+     io.enableInterrupt(BTN_DOWN, CHANGE);
+     io.enableInterrupt(BTN_OK, CHANGE);
+     io.enableInterrupt(BTN_BACK, CHANGE);
+
+     // Нативний аналоговий пін батареї залишається без змін на процесорі
+     pinMode(1, INPUT);
+     analogSetAttenuation(ADC_11db);
+ }
 
 
     void drawMainMenu()
@@ -174,6 +195,23 @@ void checkButtons()
     bool down = (io.digitalRead(BTN_DOWN) == LOW);
     bool ok   = (io.digitalRead(BTN_OK) == LOW);
     bool back = (io.digitalRead(BTN_BACK) == LOW);
+
+    if (!up && !down)
+        upDownTestLatched = false;
+
+    if (up && down)
+    {
+        if (!upDownTestLatched)
+        {
+            upDownTestLatched = true;
+            runGuiTest();
+            resetButtonsAndIgnore(300UL);
+        }
+        return;
+    }
+
+    if (upDownTestLatched)
+        return;
 
     // ==========================================
     // ЛОГІКА ОБРОБКИ: КНОПКА UP (ПІН 3)
