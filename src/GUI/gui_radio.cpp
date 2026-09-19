@@ -5,6 +5,7 @@
 #include "mod_sound.h"
 #include <Arduino_GFX_Library.h>
 
+
 extern Arduino_GFX *gfx;
 
 namespace GUI {
@@ -19,6 +20,9 @@ namespace GUI {
 
     unsigned long lastCursorBlink = 0;
     bool cursorState = true;
+
+    static constexpr unsigned long HOLD_TRIGGER_MS = 2000UL;
+    static constexpr unsigned long CLICK_RELEASE_MS = 1500UL;
 
     static bool upWasPressed = false;
     static bool downWasPressed = false;
@@ -131,7 +135,7 @@ namespace GUI {
                 gfx->setTextColor(GREEN, BLACK);
                 gfx->print(whole);
                 gfx->setTextColor(YELLOW, BLACK);
-                gfx->printf("_%02u", frac);
+                gfx->printf("%02u", frac);
             } else {
                 gfx->setTextColor(GREEN, BLACK);
                 gfx->printf("%05u", value);
@@ -162,13 +166,15 @@ namespace GUI {
     void handleRadioButtons(bool up, bool down, bool ok, bool back)
     {
         if (!isEditingFreq) {
+            const unsigned long now = millis();
+
             if (up && !upWasPressed) {
-                upPressStart = millis();
+                upPressStart = now;
                 upWasPressed = true;
             }
             if (!up && upWasPressed) {
-                unsigned long elapsed = millis() - upPressStart;
-                if (elapsed < 1500UL) {
+                const unsigned long elapsed = now - upPressStart;
+                if (!upHoldTriggered && elapsed < CLICK_RELEASE_MS) {
                     currentVolume = constrain(currentVolume + 3, 0, 63);
                     ModuleRadio::rx.setVolume(currentVolume);
                     ModuleSound::play(ModuleSound::SFX_CLICK);
@@ -177,7 +183,7 @@ namespace GUI {
                 upHoldTriggered = false;
                 upPressStart = 0;
             }
-            if (up && upWasPressed && !upHoldTriggered && (millis() - upPressStart) >= 2000UL) {
+            if (up && upWasPressed && !upHoldTriggered && (now - upPressStart) >= HOLD_TRIGGER_MS) {
                 upHoldTriggered = true;
                 radioModeArk = !radioModeArk;
                 if (radioModeArk) {
@@ -191,12 +197,12 @@ namespace GUI {
             }
 
             if (down && !downWasPressed) {
-                downPressStart = millis();
+                downPressStart = now;
                 downWasPressed = true;
             }
             if (!down && downWasPressed) {
-                unsigned long elapsed = millis() - downPressStart;
-                if (elapsed < 1500UL) {
+                const unsigned long elapsed = now - downPressStart;
+                if (!downHoldTriggered && elapsed < CLICK_RELEASE_MS) {
                     currentVolume = constrain(currentVolume - 3, 0, 63);
                     ModuleRadio::rx.setVolume(currentVolume);
                     ModuleSound::play(ModuleSound::SFX_CLICK);
@@ -205,7 +211,7 @@ namespace GUI {
                 downHoldTriggered = false;
                 downPressStart = 0;
             }
-            if (down && downWasPressed && !downHoldTriggered && !radioModeArk && (millis() - downPressStart) >= 2000UL) {
+            if (down && downWasPressed && !downHoldTriggered && !radioModeArk && (now - downPressStart) >= HOLD_TRIGGER_MS) {
                 downHoldTriggered = true;
                 receiverModulationFm = !receiverModulationFm;
                 applyRadioSettings();
@@ -220,6 +226,7 @@ namespace GUI {
             else if (back) {
                 ModuleSound::play(ModuleSound::SFX_BACK);
                 ModuleRadio::stop();
+                GUI::resetButtonsAndIgnore(800UL);
                 currentState = MAIN_MENU;
                 drawMainMenu();
             }

@@ -9,6 +9,8 @@
 #include "mod_sound.h"
 #include "mod_gy91.h"
 #include "mod_cyber.h"
+#include <SparkFunSX1509.h> // Підключаємо роботу з SX1509
+
 
 #define TFT_MOSI 11
 #define TFT_SCLK 12
@@ -19,6 +21,10 @@
 Arduino_DataBus *bus = new Arduino_ESP32SPI(TFT_DC, TFT_CS, TFT_SCLK, TFT_MOSI, -1);
 Arduino_GFX *physical_tft = new Arduino_ST7735(bus, TFT_RST, 1, false, 128, 160, 0, 0);
 Arduino_GFX *gfx = new Arduino_Canvas(128, 160, physical_tft);
+
+// Створюємо глобальний екземпляр SX1509
+SX1509 io;
+
 
 TinyGPSPlus gps;
 static unsigned long lastFrameTick = 0;
@@ -92,6 +98,34 @@ void setup()
 
     ModuleSound::init();
     ModuleGY91::init();
+
+
+    // 2. Ініціалізація периферії. 
+    // ВАЖЛИВО: Оскільки Wire.begin(8, 9) викликається всередині ModuleGY91::init(),
+    // ми запускаємо датчик першим, щоб підняти I2C шину.
+
+    ModuleSound::init();
+    ModuleGY91::init(); 
+
+    // 3. Старт SX1509 на вашій адресі 0x3E після того, як шина I2C вже активна
+     // 3. Старт SX1509 на вашій адресі 0x3E після того, як шина I2C вже активна
+    if (io.begin(0x3E)) {
+        // НАЛАШТУВАННЯ ТАКТУВАННЯ ДЛЯ Si4735:
+        // Використовуємо внутрішній генератор 2 МГц і ділимо його частоту на 4.
+        // Математика чіпа: 2000000 Гц / (2 ^ (4 - 1)) = ~32.768 кГц.
+        // Цей метод автоматично активує фізичний пін OSC на розширювачі як вихід частоти.
+        io.clock(INTERNAL_CLOCK_2MHZ, 4);
+        
+        // Налаштування апаратного дебаунсу для кнопок (збільшено для touch-like входів)
+        io.debounceConfig(8);
+        Serial.println("SX1509 clock 32.768 kHz generated successfully.");
+    } else {
+        Serial.println("[CRITICAL] SX1509 not found at 0x3E!");
+    }
+
+
+
+
     GUI::init();
     ModuleGPS::init();
 
@@ -106,6 +140,7 @@ void setup()
         0);
 
     GUI::drawSplash();
+        
     gfx->flush();  // КРИТИЧНО: Виштовхуємо сплеш на дисплей перед drawMainMenu
     GUI::drawMainMenu();
 }

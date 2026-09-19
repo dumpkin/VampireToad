@@ -14,8 +14,10 @@ namespace ModuleSound
         SFX_OK,
         SFX_BACK,
         SFX_GPS_FIX,
-        SFX_ALARM
+        SFX_ALARM,
+        SFX_TOAD_CROAK // НОВЕ: додаємо ефект квакання жаби
     };
+
 
     void init();
     void play(SoundEffect effect);

@@ -111,7 +111,11 @@ namespace GUI {
         // КРИТИЧНО: Виштовхуємо canvas на физичний дисплей перед паузою
         gfx->flush();
         
-        ModuleSound::play(ModuleSound::SFX_OK);
+       
+      // НОВЕ: Запускаємо фірмовий скрекіт жаби при старті!
+    ModuleSound::play(ModuleSound::SFX_TOAD_CROAK);
+
+    
         delay(1500);
     }
 

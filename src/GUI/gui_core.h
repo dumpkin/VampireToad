@@ -14,10 +14,16 @@ namespace GUI {
     };
 
     // Кнопки
-    #define BTN_UP     4
-    #define BTN_DOWN   5
-    #define BTN_OK     6
-    #define BTN_BACK   7
+ // Тепер це номери фізичних пінів на самому чіпі SX1509
+#define BTN_BACK  1
+#define BTN_OK    2
+#define BTN_UP    4
+#define BTN_DOWN  3
+
+
+// Пін переривання nINT, який фізично припаяний до ESP32-S3
+#define SX1509_INT_PIN 4
+
 
     // === ГЛОБАЛЬНІ ЗМІННІ ===
     extern MenuState currentState;
@@ -39,6 +45,9 @@ namespace GUI {
     
     // Основна функція відрисовки головного меню
     void drawMainMenu();
+
+    // Скинути стан кнопок і ігнорувати обробку на вказаний ms (щоб уникнути шуму при переходах)
+    void resetButtonsAndIgnore(unsigned long ms);
 }
 
 #endif

@@ -51,8 +51,33 @@ namespace ModuleSound
             }
             ledcWrite(BUZZER_CHAN, 0);
             break;
+            
+                    case SFX_TOAD_CROAK:
+            // Серія з трьох швидких звуків "ква-ква-ква"
+            for (int croakCount = 0; croakCount < 3; croakCount++)
+            {
+                // Поступове падіння частоти з високої до низької
+                for (int freq = 300; freq > 120; freq -= 10)
+                {
+                    ledcWriteTone(BUZZER_CHAN, freq);
+                    delay(12); // Крок імпульсу
+                }
+                
+                // Повне апаратне відключення генерації тону для чистої паузи
+                ledcWriteTone(BUZZER_CHAN, 0); 
+                ledcWrite(BUZZER_CHAN, 0);
+                
+                delay(150); // Коротка пауза всередині серії звуків
+            }
+            break;
+
+
+
         }
+        
     }
+
+
 
     // Реалізація звуку Motion Tracker (з "Чужих")
     void playRadarTick(int satsCount)
