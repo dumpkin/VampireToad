@@ -229,7 +229,7 @@ void checkButtons()
                 drawMainMenu();
             }
             else if (currentState == SUB_RADIO) {
-                handleRadioButtons(true, false, false, false); // Збільшення гучності / цифри
+                handleRadioButtons(true, down, ok, back); // Збільшення гучності / цифри
             }
             else if (currentState == SUB_WIFI || currentState == SUB_BLE) {
                 ModuleSound::play(ModuleSound::SFX_CLICK);
@@ -273,7 +273,7 @@ void checkButtons()
                 drawMainMenu();
             }
             else if (currentState == SUB_RADIO) {
-                handleRadioButtons(false, true, false, false); // Зменшення гучності / цифри
+                handleRadioButtons(up, true, ok, back); // Зменшення гучності / цифри
             }
             else if (currentState == SUB_WIFI || currentState == SUB_BLE) {
                 ModuleSound::play(ModuleSound::SFX_CLICK);
@@ -325,7 +325,7 @@ void checkButtons()
                                 ModuleRadio::init(); ModuleRadio::setAMBand(100U, 1150U, 561U, 10U); drawRadioScreen(); }
         }
         else if (currentState == SUB_RADIO) {
-            handleRadioButtons(false, false, true, false); // Клік на OK в Радіо
+            handleRadioButtons(up, down, true, back); // Клік на OK в Радіо
         }
         else if (currentState == SUB_WIFI || currentState == SUB_BLE) {
             ModuleSound::play(ModuleSound::SFX_OK);
@@ -355,7 +355,7 @@ void checkButtons()
     }
     if (!back && buttonWasPressed[BTN_BACK]) {
         if (currentState == SUB_RADIO) {
-            handleRadioButtons(false, false, false, true); // Клік на BACK в Радіо
+        handleRadioButtons(up, down, ok, true); // Клік на BACK в Радіо
         }
         else if (currentState == SUB_WIFI || currentState == SUB_BLE) {
             ModuleSound::play(ModuleSound::SFX_BACK);
