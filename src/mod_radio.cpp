@@ -1,5 +1,6 @@
 #include "mod_radio.h"
 #include "mod_gy91.h"
+#include "mod_test.h"
 #include <SI4735.h>
 #include <Wire.h>
 #include <SparkFunSX1509.h>
@@ -80,12 +81,9 @@ namespace ModuleRadio
     {
         // NOTE: do not call io.begin() here — SX1509 already initialized in main.setup()
 
-        gfx->fillRect(0, 0, 128, 20, RED);
-        gfx->setTextColor(BLACK, RED);
-        gfx->setTextSize(1);
-        gfx->setCursor(4, 4);
-        gfx->print("[RADIO] INIT");
-        gfx->flush();
+        // Debug color test moved to ModuleTest::runDisplayColorPalette() for future test block.
+        // It is intentionally left disabled here to keep production UI clean.
+        // ModuleTest::runDisplayColorPalette();
 
         // 1. БЕЗПЕЧНА ПЕРЕВІРКА АДРЕСИ (Метод бібліотеки pu2clr)
         int16_t detectedAddr = 0;
@@ -99,21 +97,10 @@ namespace ModuleRadio
         }
 
         if (detectedAddr == 0) {
-            gfx->fillRect(0, 20, 128, 20, RED);
-            gfx->setTextColor(WHITE, RED);
-            gfx->setCursor(4, 24);
-            gfx->print("[RADIO] ADDR FAIL");
-            gfx->flush();
             isRadioReady = false;
             Serial.println("[RADIO] Si4735 not found on I2C");
             return;
         }
-
-        gfx->fillRect(0, 20, 128, 20, YELLOW);
-        gfx->setTextColor(BLACK, YELLOW);
-        gfx->setCursor(4, 24);
-        gfx->printf("[RADIO] ADDR:%d", detectedAddr);
-        gfx->flush();
 
         // 2. Налаштування опорної частоти для Si4735 — зовнішній RCLK 32768 Hz
         rx.setRefClock(32768);
@@ -127,20 +114,8 @@ namespace ModuleRadio
         }
         delay(100);
 
-        gfx->fillRect(0, 40, 128, 20, GREEN);
-        gfx->setTextColor(BLACK, GREEN);
-        gfx->setCursor(4, 44);
-        gfx->print("[RADIO] SETUP OK");
-        gfx->flush();
-
         isRadioReady = true;
         rx.setVolume(GUI::currentVolume);
-
-        gfx->fillRect(0, 60, 128, 20, BLUE);
-        gfx->setTextColor(WHITE, BLUE);
-        gfx->setCursor(4, 64);
-        gfx->print("[RADIO] READY");
-        gfx->flush();
 
         Serial.println("[RADIO] Si4735 initialized");
     }

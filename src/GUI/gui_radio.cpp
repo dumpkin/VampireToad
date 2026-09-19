@@ -10,6 +10,9 @@ extern Arduino_GFX *gfx;
 
 namespace GUI {
     uint32_t currentRadioFreq = 561U;
+    uint32_t arkFreq = 561U;
+    uint32_t rxMediaFmFreq = 10150U;
+    uint32_t rxMediaAmFreq = 1000U;
     int currentVolume = 45;
 
     int freqDigits[5] = {0, 5, 6, 1, 0};
@@ -22,7 +25,7 @@ namespace GUI {
     bool cursorState = true;
 
     static constexpr unsigned long HOLD_TRIGGER_MS = 2000UL;
-    static constexpr unsigned long CLICK_RELEASE_MS = 1500UL;
+    static constexpr unsigned long CLICK_RELEASE_MS = 500UL;
 
     static bool upWasPressed = false;
     static bool downWasPressed = false;
@@ -31,20 +34,32 @@ namespace GUI {
     static bool upHoldTriggered = false;
     static bool downHoldTriggered = false;
 
+    void applyRadioVolume()
+    {
+        currentVolume = constrain(currentVolume, 0, 63);
+        ModuleRadio::rx.setVolume(currentVolume);
+    }
+
     void applyRadioSettings()
     {
         if (radioModeArk) {
-            currentRadioFreq = constrain(currentRadioFreq, 100U, 1150U);
+            arkFreq = constrain(arkFreq, 100U, 1150U);
+            currentRadioFreq = arkFreq;
             ModuleRadio::setAMBand(100U, 1150U, currentRadioFreq, 10U);
             return;
         }
 
         if (receiverModulationFm) {
-            currentRadioFreq = constrain(currentRadioFreq, 6400U, 10800U);
-            ModuleRadio::setFMBand(6400U, 10800U, currentRadioFreq, 250U);
+            // rxMediaFmFreq stored as units of 0.01 MHz (e.g. 10150 -> 101.50 MHz)
+            rxMediaFmFreq = constrain(rxMediaFmFreq, 6400U, 10800U);
+            currentRadioFreq = rxMediaFmFreq;
+            // ModuleRadio::setFMBand expects kHz values; scale: x10 of our 0.01MHz units -> kHz
+            ModuleRadio::setFMBand(64000U, 108000U, currentRadioFreq * 10U, 250U);
         } else {
-            currentRadioFreq = constrain(currentRadioFreq, 520U, 1710U);
-            ModuleRadio::setAMBand(520U, 1710U, currentRadioFreq, 10U);
+            // rxMediaAmFreq stored in kHz
+            rxMediaAmFreq = constrain(rxMediaAmFreq, 520U, 30000U);
+            currentRadioFreq = rxMediaAmFreq;
+            ModuleRadio::setAMBand(520U, 30000U, currentRadioFreq, 10U);
         }
     }
 
@@ -82,10 +97,12 @@ namespace GUI {
             gfx->setCursor(4, 18);
             gfx->print("[RAD:OK]");
 
+            gfx->setTextSize(0);
             gfx->setTextColor(CYAN, BLACK);
-            gfx->setCursor(72, 18);
-            gfx->print(radioModeArk ? "ARK" : "RADIO");
+            gfx->setCursor(58, 18);
+            gfx->print(radioModeArk ? "ARK" : "RX-MEDIA");
 
+            gfx->setTextSize(1);
             gfx->setTextColor(YELLOW, BLACK);
             gfx->setCursor(104, 18);
             gfx->printf("VOL:%02d", currentVolume);
@@ -133,7 +150,7 @@ namespace GUI {
                 uint32_t whole = value / 100U;
                 uint32_t frac = value % 100U;
                 gfx->setTextColor(GREEN, BLACK);
-                gfx->print(whole);
+                if (whole < 10U) gfx->printf("0%u", whole); else gfx->printf("%u", whole);
                 gfx->setTextColor(YELLOW, BLACK);
                 gfx->printf("%02u", frac);
             } else {
@@ -157,7 +174,7 @@ namespace GUI {
         if (radioModeArk) {
             gfx->print("BAND: ARK");
         } else {
-            gfx->print(receiverModulationFm ? "BAND: RADIO FM" : "BAND: RADIO AM");
+            gfx->print(receiverModulationFm ? "BAND: RX-MEDIA FM" : "BAND: RX-MEDIA AM");
         }
 
         drawUniversalFooter();
@@ -174,9 +191,9 @@ namespace GUI {
             }
             if (!up && upWasPressed) {
                 const unsigned long elapsed = now - upPressStart;
-                if (!upHoldTriggered && elapsed < CLICK_RELEASE_MS) {
-                    currentVolume = constrain(currentVolume + 3, 0, 63);
-                    ModuleRadio::rx.setVolume(currentVolume);
+                if (!upHoldTriggered && elapsed <= CLICK_RELEASE_MS) {
+                    currentVolume = constrain(currentVolume + 1, 0, 63);
+                    applyRadioVolume();
                     ModuleSound::play(ModuleSound::SFX_CLICK);
                 }
                 upWasPressed = false;
@@ -187,10 +204,10 @@ namespace GUI {
                 upHoldTriggered = true;
                 radioModeArk = !radioModeArk;
                 if (radioModeArk) {
-                    currentRadioFreq = 561U;
+                    currentRadioFreq = arkFreq;
                 } else {
-                    currentRadioFreq = 10150U;
                     receiverModulationFm = true;
+                    currentRadioFreq = rxMediaFmFreq;
                 }
                 applyRadioSettings();
                 ModuleSound::play(ModuleSound::SFX_OK);
@@ -202,9 +219,9 @@ namespace GUI {
             }
             if (!down && downWasPressed) {
                 const unsigned long elapsed = now - downPressStart;
-                if (!downHoldTriggered && elapsed < CLICK_RELEASE_MS) {
-                    currentVolume = constrain(currentVolume - 3, 0, 63);
-                    ModuleRadio::rx.setVolume(currentVolume);
+                if (!downHoldTriggered && elapsed <= CLICK_RELEASE_MS) {
+                    currentVolume = constrain(currentVolume - 1, 0, 63);
+                    applyRadioVolume();
                     ModuleSound::play(ModuleSound::SFX_CLICK);
                 }
                 downWasPressed = false;
@@ -214,6 +231,7 @@ namespace GUI {
             if (down && downWasPressed && !downHoldTriggered && !radioModeArk && (now - downPressStart) >= HOLD_TRIGGER_MS) {
                 downHoldTriggered = true;
                 receiverModulationFm = !receiverModulationFm;
+                currentRadioFreq = receiverModulationFm ? rxMediaFmFreq : rxMediaAmFreq;
                 applyRadioSettings();
                 ModuleSound::play(ModuleSound::SFX_OK);
             }
@@ -273,8 +291,10 @@ namespace GUI {
                                          static_cast<uint32_t>(freqDigits[4]);
                         if (receiverModulationFm) {
                             currentRadioFreq = constrain(value, 6400U, 10800U);
+                            rxMediaFmFreq = currentRadioFreq;
                         } else {
-                            currentRadioFreq = constrain(value, 520U, 1710U);
+                            currentRadioFreq = constrain(value, 520U, 30000U);
+                            rxMediaAmFreq = currentRadioFreq;
                         }
                         applyRadioSettings();
                         isEditingFreq = false;
