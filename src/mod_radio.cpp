@@ -7,9 +7,8 @@
 #include <Arduino_GFX_Library.h>
 
 extern Arduino_GFX *gfx;
-extern SX1509 io; // Надаємо модулю радіо доступ до SX1509 з main.cpp
+extern SX1509 io;
 
-// ДОДАТИ ЦЕЙ РЯДОК: пов'язуємо гучність з файлу gui_radio.cpp
 namespace GUI {
     extern int currentVolume;
 }
@@ -79,18 +78,11 @@ namespace ModuleRadio
 
     void init()
     {
-        // NOTE: do not call io.begin() here — SX1509 already initialized in main.setup()
-
-        // Debug color test moved to ModuleTest::runDisplayColorPalette() for future test block.
-        // It is intentionally left disabled here to keep production UI clean.
-        // ModuleTest::runDisplayColorPalette();
-
-        // 1. БЕЗПЕЧНА ПЕРЕВІРКА АДРЕСИ (Метод бібліотеки pu2clr)
+        // SX1509 is already initialized in main setup.
         int16_t detectedAddr = 0;
         if (RADIO_RST_ON_EXPANDER) {
             detectedAddr = rx.getDeviceI2CAddress(RADIO_RST_PIN_EXPANDER);
         } else {
-            // Якщо reset на ESP GPIO, підготуємо пін і передамо його бібліотеці
             pinMode(RADIO_RST_GPIO, OUTPUT);
             digitalWrite(RADIO_RST_GPIO, HIGH);
             detectedAddr = rx.getDeviceI2CAddress(RADIO_RST_GPIO);
@@ -102,21 +94,19 @@ namespace ModuleRadio
             return;
         }
 
-        // 2. Налаштування опорної частоти для Si4735 — зовнішній RCLK 32768 Hz
+        // External RCLK reference.
         rx.setRefClock(32768);
         rx.setRefClockPrescaler(1);
 
-        // 3. Апаратний старт в режимі RCLK
         if (RADIO_RST_ON_EXPANDER) {
-            rx.setup(RADIO_RST_PIN_EXPANDER, 0, 1 /* AM */, SI473X_ANALOG_AUDIO, XOSCEN_RCLK, 0);
+            rx.setup(RADIO_RST_PIN_EXPANDER, 0, 1, SI473X_ANALOG_AUDIO, XOSCEN_RCLK, 0);
         } else {
-            rx.setup(RADIO_RST_GPIO, 0, 1 /* AM */, SI473X_ANALOG_AUDIO, XOSCEN_RCLK, 0);
+            rx.setup(RADIO_RST_GPIO, 0, 1, SI473X_ANALOG_AUDIO, XOSCEN_RCLK, 0);
         }
         delay(100);
 
         isRadioReady = true;
         rx.setVolume(GUI::currentVolume);
-
         Serial.println("[RADIO] Si4735 initialized");
     }
 

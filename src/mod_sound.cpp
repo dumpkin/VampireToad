@@ -51,33 +51,43 @@ namespace ModuleSound
             }
             ledcWrite(BUZZER_CHAN, 0);
             break;
-            
-                    case SFX_TOAD_CROAK:
-            // Серія з трьох швидких звуків "ква-ква-ква"
+
+        case SFX_TOAD_CROAK:
+            // Серія з трьох реалістичних звуків "ква-ква-ква"
             for (int croakCount = 0; croakCount < 3; croakCount++)
             {
-                // Поступове падіння частоти з високої до низької
-                for (int freq = 300; freq > 120; freq -= 10)
+                // Замість падіння частоти, ми робимо серію швидких мікро-клацань.
+                // Справжня жаба видає саме пачки імпульсів.
+                for (int i = 0; i < 18; i++)
                 {
-                    ledcWriteTone(BUZZER_CHAN, freq);
-                    delay(12); // Крок імпульсу
+                    // Базова низька частота Google-жаби (близько 130 Гц)
+                    int baseFreq = 130;
+
+                    // Створюємо штучний хрип (FM-модуляція)
+                    // Швидко чергуємо основний тон і верхню гармоніку
+                    if (i % 2 == 0)
+                    {
+                        ledcWriteTone(BUZZER_CHAN, baseFreq);
+                    }
+                    else
+                    {
+                        ledcWriteTone(BUZZER_CHAN, baseFreq + 50); // хрип трохи вище
+                    }
+
+                    // Дуже важливий таймінг: мікро-імпульс має бути коротким (4-6 мс)
+                    delay(5);
                 }
-                
-                // Повне апаратне відключення генерації тону для чистої паузи
-                ledcWriteTone(BUZZER_CHAN, 0); 
+
+                // Апаратне вимкнення звуку між кваканнями
+                ledcWriteTone(BUZZER_CHAN, 0);
                 ledcWrite(BUZZER_CHAN, 0);
-                
-                delay(150); // Коротка пауза всередині серії звуків
+
+                // Пауза між повноцінними звуками "ква"
+                delay(160);
             }
             break;
-
-
-
         }
-        
     }
-
-
 
     // Реалізація звуку Motion Tracker (з "Чужих")
     void playRadarTick(int satsCount)

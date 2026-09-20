@@ -2,16 +2,14 @@
 #define MOD_RADIO_H
 
 #include <Arduino.h>
-#include <SI4735.h> // !!! КРИТИЧНИЙ ФІКС: перенесіть цей інклуд сюди, на самий початок хедера
+#include <SI4735.h>
 
 namespace ModuleRadio {
 
-// Конфігурація для Reset-піна радіомодуля
-// Якщо true — RST на SX1509 (expander) фізичний пін RADIO_RST_PIN_EXPANDER
-// Якщо false — RST використовуємо прямо на ESP GPIO RADIO_RST_GPIO
-static constexpr bool RADIO_RST_ON_EXPANDER = false; // повернути на ESP GPIO (pin 10)
-static constexpr uint8_t RADIO_RST_PIN_EXPANDER = 0; 
-static constexpr uint8_t RADIO_RST_GPIO = 10; // ESP pin previously used
+// Radio reset pin configuration.
+static constexpr bool RADIO_RST_ON_EXPANDER = false;
+static constexpr uint8_t RADIO_RST_PIN_EXPANDER = 0;
+static constexpr uint8_t RADIO_RST_GPIO = 10;
 
 
     enum TuneStep : uint32_t {
