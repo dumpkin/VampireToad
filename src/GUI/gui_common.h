@@ -3,6 +3,8 @@
 
 #include <Arduino.h>
 
+class Arduino_GFX;
+
 namespace GUI {
     // === СПІЛЬНІ УТИЛІТИ ДЛЯ ВСІХ ЕКРАНІВ ===
     
@@ -23,6 +25,7 @@ namespace GUI {
     
     // Сплеш-скрін при завантаженні
     void drawSplash(bool keypadReady);
+    void drawFrogLogo(Arduino_GFX &gfx, int16_t x, int16_t y);
 }
 
 #endif

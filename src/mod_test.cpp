@@ -2,10 +2,110 @@
 #include "mod_buttons.h"
 #include <Wire.h>
 #include <Arduino_GFX_Library.h>
+#include <esp32-hal-psram.h>
+#include <esp_heap_caps.h>
 
 extern Arduino_GFX *gfx;
 
 namespace ModuleTest {
+    namespace {
+        constexpr size_t PSRAM_TEST_BYTES = 16U * 1024U;
+
+        enum class PsramTestStatus {
+            NotFound,
+            AllocationFailed,
+            Passed,
+            Failed
+        };
+
+        struct PsramTestResult {
+            PsramTestStatus status;
+            size_t totalBytes;
+            size_t freeBytes;
+            size_t failedWord;
+        };
+
+        PsramTestResult testPsram()
+        {
+            PsramTestResult result = {PsramTestStatus::NotFound, 0, 0, 0};
+            if (!psramFound()) return result;
+
+            result.totalBytes = ESP.getPsramSize();
+            result.freeBytes = ESP.getFreePsram();
+            uint32_t *buffer = static_cast<uint32_t *>(
+                heap_caps_malloc(PSRAM_TEST_BYTES, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT));
+            if (buffer == nullptr) {
+                result.status = PsramTestStatus::AllocationFailed;
+                return result;
+            }
+
+            result.status = PsramTestStatus::Passed;
+            const size_t wordCount = PSRAM_TEST_BYTES / sizeof(uint32_t);
+            for (size_t index = 0; index < wordCount; ++index) {
+                buffer[index] = static_cast<uint32_t>(index) * 0x9E3779B9U ^ 0xA5A55A5AU;
+            }
+            for (size_t index = 0; index < wordCount; ++index) {
+                const uint32_t expected =
+                    static_cast<uint32_t>(index) * 0x9E3779B9U ^ 0xA5A55A5AU;
+                if (buffer[index] != expected) {
+                    result.status = PsramTestStatus::Failed;
+                    result.failedWord = index;
+                    break;
+                }
+            }
+
+            if (result.status == PsramTestStatus::Passed) {
+                for (size_t index = 0; index < wordCount; ++index) {
+                    buffer[index] = ~(static_cast<uint32_t>(index) * 0x9E3779B9U ^ 0xA5A55A5AU);
+                }
+                for (size_t index = 0; index < wordCount; ++index) {
+                    const uint32_t expected =
+                        ~(static_cast<uint32_t>(index) * 0x9E3779B9U ^ 0xA5A55A5AU);
+                    if (buffer[index] != expected) {
+                        result.status = PsramTestStatus::Failed;
+                        result.failedWord = index;
+                        break;
+                    }
+                }
+            }
+
+            heap_caps_free(buffer);
+            return result;
+        }
+
+        void drawPsramResult(const PsramTestResult &result)
+        {
+            gfx->setCursor(8, 94);
+            gfx->setTextColor(WHITE, BLACK);
+            if (result.status == PsramTestStatus::NotFound) {
+                gfx->print("PSRAM NOT FOUND");
+                gfx->setCursor(8, 106);
+                gfx->print("TEST SKIPPED");
+                return;
+            }
+
+            gfx->printf("P:%uKB F:%uKB",
+                        static_cast<unsigned>(result.totalBytes / 1024U),
+                        static_cast<unsigned>(result.freeBytes / 1024U));
+            gfx->setCursor(8, 106);
+            gfx->setTextColor(result.status == PsramTestStatus::Passed ? GREEN : RED, BLACK);
+            switch (result.status) {
+                case PsramTestStatus::AllocationFailed:
+                    gfx->print("TEST ALLOC FAILED");
+                    break;
+                case PsramTestStatus::Passed:
+                    gfx->print("TEST PASS 16KB");
+                    break;
+                case PsramTestStatus::Failed:
+                    gfx->printf("TEST FAIL @%u",
+                                static_cast<unsigned>(result.failedWord * sizeof(uint32_t)));
+                    break;
+                case PsramTestStatus::NotFound:
+                    break;
+            }
+        }
+    }
+
     bool test_active = false;
 
     void runDisplayColorPalette()
@@ -162,6 +262,8 @@ namespace ModuleTest {
             }
         }
 
+        const PsramTestResult psramResult = testPsram();
+
         gfx->fillScreen(BLACK);
         gfx->setTextColor(GREEN, BLACK);
         gfx->setCursor(4, 8);
@@ -180,11 +282,12 @@ namespace ModuleTest {
                 if (index > 0) gfx->print(" ");
                 gfx->printf("0x%02X", foundAddresses[index]);
                 if ((index + 1) % 4 == 0 && index + 1 < foundCount) {
-                    gfx->setCursor(8, 65 + ((index / 4) * 18));
+                    gfx->setCursor(8, 59 + ((index / 4) * 12));
                 }
             }
         }
-        gfx->setCursor(8, 106);
+        drawPsramResult(psramResult);
+        gfx->setCursor(8, 118);
         gfx->setTextColor(WHITE, BLACK);
         gfx->print("Scan complete");
         gfx->flush();

@@ -104,15 +104,24 @@ namespace GUI {
     void drawSplash(bool keypadReady)
     {
         gfx->fillScreen(BLACK);
+        drawFrogLogo(*gfx, 6, 10);
+
+        gfx->drawFastVLine(61, 12, 50, GREEN);
         gfx->setTextColor(GREEN, BLACK);
         gfx->setTextSize(2);
-        gfx->setCursor(12, 40);
-        gfx->print("VAMPIRE TOAD");
+        gfx->setCursor(68, 18);
+        gfx->print("VAMPIRE");
+        gfx->setCursor(86, 42);
+        gfx->print("TOAD");
+
         gfx->setTextColor(WHITE, BLACK);
         gfx->setTextSize(1);
-        gfx->setCursor(44, 65);
+        gfx->setCursor(43, 73);
         gfx->print("PENTA OS v2.0");
-        gfx->setCursor(20, 82);
+        gfx->setCursor(35, 85);
+        gfx->print("ESP32-S3 N16R8");
+        gfx->drawFastHLine(8, 97, 144, GREEN);
+        gfx->setCursor(keypadReady ? 14 : 26, 103);
         gfx->print(keypadReady ? "Hold # for keypad test" : "Keypad unavailable");
 
         // КРИТИЧНО: Виштовхуємо canvas на физичний дисплей перед паузою
