@@ -21,10 +21,6 @@ namespace ModuleSound
 
     void init();
     void play(SoundEffect effect);
-
-    // Динамічний ефект "Чужих" для радара
-    // satsCount — кількість супутників, які зараз бачить GPS
-    void playRadarTick(int satsCount);
 }
 
 #endif

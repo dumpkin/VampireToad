@@ -1,180 +1,383 @@
 #include "mod_gps.h"
-#include "mod_sound.h"
-#include "gui.h"
-#include <Arduino_GFX_Library.h>
 #include <TinyGPS++.h>
+#include <Preferences.h>
+#include <math.h>
+#include <string.h>
 
-extern Arduino_GFX *gfx;
 extern TinyGPSPlus gps;
 
 namespace ModuleGPS
 {
-    int radarRadius = 0;
-    const int maxRadius = 40;
-    const int centerX = 48;
-    const int centerY = 58;
-    unsigned long lastRadarTick = 0;
-    unsigned long lastTextUpdate = 0;
+    namespace
+    {
+        constexpr uint8_t MAX_SATELLITES = 32;
+        constexpr uint8_t GSV_GROUP_COUNT = 5;
+        constexpr unsigned long SATELLITE_STALE_MS = 4000;
+        constexpr size_t NMEA_BUFFER_SIZE = 256;
+        constexpr uint8_t MAX_NMEA_FIELDS = 40;
+
+        struct GsvGroup {
+            Satellite satellites[MAX_SATELLITES];
+            uint8_t count;
+            uint8_t inView;
+            unsigned long lastUpdatedAt;
+            bool hasUpdate;
+        };
+
+        char nmeaBuffer[NMEA_BUFFER_SIZE];
+        size_t nmeaLength = 0;
+        bool nmeaChecksumValid = false;
+        bool nmeaOverflow = false;
+        GsvGroup gsvGroups[GSV_GROUP_COUNT] = {};
+        Satellite visibleSatellites[MAX_SATELLITES];
+        uint8_t visibleCount = 0;
+        uint8_t visibleInView = 0;
+        unsigned long visibleUpdatedAt = 0;
+        bool hasVisibleUpdate = false;
+        portMUX_TYPE satelliteMux = portMUX_INITIALIZER_UNLOCKED;
+        LastFix lastFix = {};
+        portMUX_TYPE fixMux = portMUX_INITIALIZER_UNLOCKED;
+        Preferences preferences;
+        bool preferencesReady = false;
+        double lastPersistedLatitude = 0.0;
+        double lastPersistedLongitude = 0.0;
+        unsigned long lastPersistedAt = 0;
+
+        int parseNumber(const char *text)
+        {
+            if (text == nullptr || *text == '\0') return -1;
+
+            int value = 0;
+            while (*text >= '0' && *text <= '9') {
+                value = value * 10 + (*text - '0');
+                if (value > 999) return -1;
+                ++text;
+            }
+            return *text == '\0' ? value : -1;
+        }
+
+        int findGsvGroup(const char *talker)
+        {
+            if (talker[0] == 'G' && talker[1] == 'P') return 0;
+            if (talker[0] == 'G' && talker[1] == 'L') return 1;
+            if (talker[0] == 'G' && talker[1] == 'B') return 2;
+            if (talker[0] == 'B' && talker[1] == 'D') return 3;
+            if (talker[0] == 'G' && talker[1] == 'N') return 4;
+            return -1;
+        }
+
+        Constellation constellationFor(const char *talker, int satelliteId)
+        {
+            if (talker[0] == 'G' && talker[1] == 'L') return Constellation::GLONASS;
+            if ((talker[0] == 'G' && talker[1] == 'B') ||
+                (talker[0] == 'B' && talker[1] == 'D')) {
+                return Constellation::BEIDOU;
+            }
+
+            if (talker[0] == 'G' && talker[1] == 'N') {
+                if (satelliteId >= 65 && satelliteId <= 96) return Constellation::GLONASS;
+                if (satelliteId >= 201 && satelliteId <= 237) return Constellation::BEIDOU;
+            }
+            return Constellation::GPS;
+        }
+
+        void addStagedSatellite(GsvGroup &group, const Satellite &satellite)
+        {
+            for (uint8_t i = 0; i < group.count; ++i) {
+                if (group.satellites[i].id == satellite.id &&
+                    group.satellites[i].constellation == satellite.constellation) {
+                    group.satellites[i] = satellite;
+                    return;
+                }
+            }
+
+            if (group.count < MAX_SATELLITES) {
+                group.satellites[group.count++] = satellite;
+            }
+        }
+
+        void publishSatellites()
+        {
+            Satellite mergedSatellites[MAX_SATELLITES];
+            uint8_t mergedCount = 0;
+            uint16_t totalInView = 0;
+            const unsigned long now = millis();
+
+            for (uint8_t groupIndex = 0; groupIndex < GSV_GROUP_COUNT; ++groupIndex) {
+                const GsvGroup &group = gsvGroups[groupIndex];
+                if (!group.hasUpdate ||
+                    now - group.lastUpdatedAt > SATELLITE_STALE_MS) {
+                    continue;
+                }
+                totalInView += group.inView;
+                for (uint8_t satelliteIndex = 0;
+                     satelliteIndex < group.count;
+                     ++satelliteIndex) {
+                    bool duplicate = false;
+                    for (uint8_t mergedIndex = 0; mergedIndex < mergedCount; ++mergedIndex) {
+                        if (mergedSatellites[mergedIndex].id == group.satellites[satelliteIndex].id &&
+                            mergedSatellites[mergedIndex].constellation ==
+                                group.satellites[satelliteIndex].constellation) {
+                            mergedSatellites[mergedIndex] =
+                                group.satellites[satelliteIndex];
+                            duplicate = true;
+                            break;
+                        }
+                    }
+                    if (!duplicate && mergedCount < MAX_SATELLITES) {
+                        mergedSatellites[mergedCount++] =
+                            group.satellites[satelliteIndex];
+                    }
+                }
+            }
+
+            portENTER_CRITICAL(&satelliteMux);
+            memcpy(visibleSatellites, mergedSatellites,
+                   mergedCount * sizeof(Satellite));
+            visibleCount = mergedCount;
+            visibleInView = totalInView > 255 ? 255 : static_cast<uint8_t>(totalInView);
+            visibleUpdatedAt = now;
+            hasVisibleUpdate = true;
+            portEXIT_CRITICAL(&satelliteMux);
+        }
+
+        void expireVisibleSatellites()
+        {
+            portENTER_CRITICAL(&satelliteMux);
+            if (hasVisibleUpdate &&
+                millis() - visibleUpdatedAt > SATELLITE_STALE_MS) {
+                visibleCount = 0;
+                visibleInView = 0;
+                hasVisibleUpdate = false;
+            }
+            portEXIT_CRITICAL(&satelliteMux);
+        }
+
+        void parseGsvSentence(char *sentence)
+        {
+            char *fields[MAX_NMEA_FIELDS];
+            uint8_t fieldCount = 0;
+            fields[fieldCount++] = sentence;
+
+            for (char *cursor = sentence; *cursor != '\0'; ++cursor) {
+                if (*cursor == '*') {
+                    *cursor = '\0';
+                    break;
+                }
+                if (*cursor == ',' && fieldCount < MAX_NMEA_FIELDS) {
+                    *cursor = '\0';
+                    fields[fieldCount++] = cursor + 1;
+                }
+            }
+
+            if (strlen(fields[0]) < 6 ||
+                strcmp(fields[0] + strlen(fields[0]) - 3, "GSV") != 0 ||
+                fieldCount < 4) {
+                return;
+            }
+
+            const int messageCount = parseNumber(fields[1]);
+            const int messageNumber = parseNumber(fields[2]);
+            const int satellitesInView = parseNumber(fields[3]);
+            if (messageCount < 1 || messageNumber < 1 ||
+                messageNumber > messageCount || satellitesInView < 0) {
+                return;
+            }
+
+            const char *talker = fields[0] + 1;
+            const int groupIndex = findGsvGroup(talker);
+            if (groupIndex < 0) return;
+            GsvGroup &group = gsvGroups[groupIndex];
+
+            if (messageNumber == 1) {
+                group.count = 0;
+                group.inView = satellitesInView > 255
+                    ? 255
+                    : static_cast<uint8_t>(satellitesInView);
+            }
+
+            for (uint8_t index = 0; index < 4; ++index) {
+                const uint8_t fieldIndex = 4 + index * 4;
+                if (fieldIndex >= fieldCount) break;
+
+                const int id = parseNumber(fields[fieldIndex]);
+                if (id < 1 || id > 999 || fieldIndex + 3 >= fieldCount) continue;
+
+                const int elevation = parseNumber(fields[fieldIndex + 1]);
+                const int azimuth = parseNumber(fields[fieldIndex + 2]);
+                const int signalStrength = parseNumber(fields[fieldIndex + 3]);
+                if (elevation < 0 || elevation > 90 ||
+                    azimuth < 0 || azimuth > 359) {
+                    continue;
+                }
+
+                Satellite satellite = {
+                    static_cast<uint16_t>(id),
+                    static_cast<uint16_t>(azimuth),
+                    static_cast<uint8_t>(elevation),
+                    static_cast<uint8_t>(signalStrength < 0 ? 0 : signalStrength),
+                    constellationFor(talker, id)
+                };
+                addStagedSatellite(group, satellite);
+            }
+
+            if (messageNumber == messageCount) {
+                group.lastUpdatedAt = millis();
+                group.hasUpdate = true;
+                publishSatellites();
+            }
+        }
+
+        void processNmeaSentence()
+        {
+            if (nmeaOverflow) {
+                Serial.println("[GPS NMEA] DROPPED: sentence exceeds buffer.");
+            } else if (nmeaLength > 0) {
+                nmeaBuffer[nmeaLength] = '\0';
+                Serial.print("[GPS NMEA] ");
+                Serial.println(nmeaBuffer);
+            }
+            if (!nmeaOverflow && nmeaChecksumValid &&
+                nmeaLength > 0 && nmeaBuffer[0] == '$') {
+                parseGsvSentence(nmeaBuffer);
+            }
+            nmeaLength = 0;
+            nmeaChecksumValid = false;
+            nmeaOverflow = false;
+        }
+    }
 
     void init()
     {
         Serial2.begin(9600, SERIAL_8N1, 18, 17);
-        radarRadius = 0;
-    }
+        nmeaLength = 0;
+        nmeaChecksumValid = false;
+        nmeaOverflow = false;
+        memset(gsvGroups, 0, sizeof(gsvGroups));
 
-    void stop()
-    {
-        radarRadius = 0;
-        // Затираємо ліву радарну зону чорним кольором прямо в буфері
-        gfx->fillRect(2, 14, 93, 99, BLACK);
-    }
-
-    void drawRadarAnimation()
-    {
-        if (millis() - lastRadarTick >= 50)
-        {
-            lastRadarTick = millis();
-
-            // Крок анімації під 1-секундний цикл
-            radarRadius += 2;
-
-            if (radarRadius > maxRadius)
-            {
-                radarRadius = 0;
-                ModuleSound::playRadarTick(gps.satellites.value());
+        preferencesReady = preferences.begin("gps-fix", false);
+        if (!preferencesReady) {
+            Serial.println("[GPS] Could not open NVS namespace for last fix.");
+        } else if (preferences.getBool("valid", false)) {
+            LastFix storedFix = {};
+            storedFix.latitude = preferences.getDouble("latitude", 0.0);
+            storedFix.longitude = preferences.getDouble("longitude", 0.0);
+            storedFix.valid = isfinite(storedFix.latitude) &&
+                              isfinite(storedFix.longitude) &&
+                              fabs(storedFix.latitude) <= 90.0 &&
+                              fabs(storedFix.longitude) <= 180.0;
+            if (storedFix.valid) {
+                portENTER_CRITICAL(&fixMux);
+                lastFix = storedFix;
+                portEXIT_CRITICAL(&fixMux);
+                lastPersistedLatitude = storedFix.latitude;
+                lastPersistedLongitude = storedFix.longitude;
+            } else {
+                Serial.println("[GPS] Stored last fix is invalid.");
             }
         }
 
-        // МАЛЮЄМО АНАЛОГОВИЙ ФОСФОРНИЙ ШЛЕЙФ ЗГАСАННЯ ПРЯМО З НУЛЯ
-        // Оскільки зона очищується перед кадром, старий хвіст затирається автоматично
-        if (radarRadius >= 4)
-            gfx->drawCircle(centerX, centerY, radarRadius - 4, RGB565_DARKGREY);
-        if (radarRadius >= 3)
-            gfx->drawCircle(centerX, centerY, radarRadius - 3, DARKGREEN);
-        if (radarRadius >= 2)
-            gfx->drawCircle(centerX, centerY, radarRadius - 2, DARKGREEN);
-        if (radarRadius >= 1)
-            gfx->drawCircle(centerX, centerY, radarRadius - 1, GREEN);
-        gfx->drawCircle(centerX, centerY, radarRadius, WHITE);
-
-        // Статичне центральне перехрестя (завжди малюється поверх шлейфів)
-        gfx->drawFastHLine(centerX - 5, centerY, 10, GREEN);
-        gfx->drawFastVLine(centerX, centerY - 5, 10, GREEN);
+        portENTER_CRITICAL(&satelliteMux);
+        visibleCount = 0;
+        visibleInView = 0;
+        visibleUpdatedAt = 0;
+        hasVisibleUpdate = false;
+        portEXIT_CRITICAL(&satelliteMux);
     }
 
-    void drawRightPanel()
+    void encode(char character)
     {
-        gfx->fillRect(97, 14, 62, 99, BLACK);
+        if (gps.encode(character)) nmeaChecksumValid = true;
 
-        gfx->setTextColor(GREEN, BLACK);
-        gfx->setCursor(101, 16);
-        gfx->print("SATS:");
-        gfx->setTextColor(WHITE, BLACK);
-        gfx->setCursor(134, 16);
-        gfx->print(gps.satellites.value());
-
-        int satsCount = gps.satellites.value();
-        for (int i = 0; i < 6; i++)
-        {
-            int posX = 101 + (i * 10);
-            if (satsCount > 0 && i < satsCount)
-            {
-                int barHeight = (15 + (i * 4)) * 0.5;
-                if (barHeight > 22)
-                    barHeight = 22;
-                gfx->fillRect(posX, 62 - barHeight, 5, barHeight, (i == 1 || i == 4) ? RED : GREEN);
-            }
-            else
-            {
-                gfx->fillRect(posX, 61, 5, 2, RGB565_DARKGREY);
-            }
+        if (character == '$') {
+            nmeaLength = 0;
+            nmeaChecksumValid = false;
+            nmeaOverflow = false;
+        }
+        if (character == '\r') return;
+        if (character == '\n') {
+            processNmeaSentence();
+            return;
         }
 
-        gfx->drawFastHLine(97, 68, 63, DARKGREEN);
-
-        gfx->setTextColor(YELLOW, BLACK);
-        if (gps.location.isValid())
-        {
-            gfx->setCursor(101, 74);
-            gfx->print("LAT:");
-            gfx->setCursor(101, 83);
-            gfx->print(gps.location.lat(), 4);
-            gfx->setCursor(101, 94);
-            gfx->print("LON:");
-            gfx->setCursor(101, 103);
-            gfx->print(gps.location.lng(), 4);
+        if (nmeaOverflow) return;
+        if (nmeaLength + 1 >= NMEA_BUFFER_SIZE) {
+            nmeaLength = 0;
+            nmeaOverflow = true;
+            return;
         }
-        else
-        {
-            gfx->setTextColor(RGB565_DARKGREY, BLACK);
-            gfx->setCursor(101, 74);
-            gfx->print("NO");
-            gfx->setCursor(101, 84);
-            gfx->print("POSITION");
-        }
+        nmeaBuffer[nmeaLength++] = character;
     }
 
-    void drawBottomStatusBar()
+    void recordFix(double latitude, double longitude)
     {
-        gfx->drawFastHLine(0, 114, 160, GREEN);
-        gfx->fillRect(0, 115, 160, 13, BLACK);
-
-        gfx->setTextColor(WHITE, BLACK);
-        gfx->setCursor(2, 117);
-        if (gps.time.isValid())
-        {
-            int localHour = (gps.time.hour() + 3) % 24;
-            gfx->printf("%02d:%02d:%02d", localHour, gps.time.minute(), gps.time.second());
-        }
-        else
-        {
-            gfx->print("00:00:00");
+        if (!isfinite(latitude) || !isfinite(longitude) ||
+            fabs(latitude) > 90.0 || fabs(longitude) > 180.0) {
+            return;
         }
 
-        int totalSats = gps.satellites.value();
-        int gpsSats = totalSats * 0.6;
-        int bdSats = totalSats - gpsSats;
+        LastFix fix = {latitude, longitude, true};
+        portENTER_CRITICAL(&fixMux);
+        lastFix = fix;
+        portEXIT_CRITICAL(&fixMux);
 
-        gfx->setTextColor(GREEN, BLACK);
-        gfx->setCursor(62, 117);
-        gfx->printf("GP:%d", gpsSats);
-
-        gfx->setTextColor(CYAN, BLACK);
-        gfx->setCursor(96, 117);
-        gfx->printf("BD:%d", bdSats);
-
-        if (gps.location.isValid())
-        {
-            gfx->setTextColor(GREEN, BLACK);
-            gfx->setCursor(126, 117);
-            gfx->print("FIX:3D");
+        if (!preferencesReady) {
+            return;
         }
-        else
-        {
-            gfx->setTextColor(RED, BLACK);
-            gfx->setCursor(126, 117);
-            gfx->print("FIX:NO");
+
+        const unsigned long now = millis();
+        const double latitudeDeltaMeters = (latitude - lastPersistedLatitude) * 111320.0;
+        const double longitudeScale = cos(latitude * 0.0174532925);
+        const double longitudeDeltaMeters =
+            (longitude - lastPersistedLongitude) * 111320.0 * longitudeScale;
+        const double movedMeters = sqrt(latitudeDeltaMeters * latitudeDeltaMeters +
+                                         longitudeDeltaMeters * longitudeDeltaMeters);
+        const bool firstPersist = !preferences.getBool("valid", false);
+        const bool movedEnough = movedMeters >= 1000.0;
+        const bool saveIntervalElapsed = now - lastPersistedAt >= 3600000UL;
+
+        if (!firstPersist && !movedEnough && !saveIntervalElapsed) {
+            return;
         }
+
+        const size_t written = preferences.putDouble("latitude", latitude) +
+                               preferences.putDouble("longitude", longitude);
+        if (written == 0 || !preferences.putBool("valid", true)) {
+            Serial.println("[GPS] Failed to save last fix to NVS.");
+            return;
+        }
+
+        lastPersistedLatitude = latitude;
+        lastPersistedLongitude = longitude;
+        lastPersistedAt = now;
     }
 
-    void update()
+    LastFix getLastFix()
     {
-        while (Serial2.available() > 0)
-        {
-            gps.encode(Serial2.read());
-        }
+        portENTER_CRITICAL(&fixMux);
+        const LastFix fix = lastFix;
+        portEXIT_CRITICAL(&fixMux);
+        return fix;
+    }
 
-        // КРИТИЧНО ДЛЯ CANVAS: Чисто очищаємо ліву зону радара перед кожним новим кадром в пам'яті
-        gfx->fillRect(2, 14, 93, 99, BLACK);
+    uint8_t copySatellites(Satellite *destination, uint8_t capacity)
+    {
+        if (destination == nullptr || capacity == 0) return 0;
 
-        // Послідовно рендеримо компоненти у відеобуфер
-        drawRadarAnimation();
+        expireVisibleSatellites();
+        portENTER_CRITICAL(&satelliteMux);
+        const uint8_t count = visibleCount < capacity ? visibleCount : capacity;
+        memcpy(destination, visibleSatellites, count * sizeof(Satellite));
+        portEXIT_CRITICAL(&satelliteMux);
+        return count;
+    }
 
-        if (millis() - lastTextUpdate >= 500)
-        {
-            lastTextUpdate = millis();
-            drawRightPanel();
-            drawBottomStatusBar();
-        }
+    uint8_t satellitesInView()
+    {
+        expireVisibleSatellites();
+        portENTER_CRITICAL(&satelliteMux);
+        const uint8_t count = visibleInView;
+        portEXIT_CRITICAL(&satelliteMux);
+        return count;
     }
 }

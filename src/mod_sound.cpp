@@ -89,30 +89,4 @@ namespace ModuleSound
         }
     }
 
-    // Реалізація звуку Motion Tracker (з "Чужих")
-    void playRadarTick(int satsCount)
-    {
-        if (satsCount == 0)
-        {
-            // "Порожньо": глухий, низький апаратний "тік" (800 Гц)
-            ledcWriteTone(BUZZER_CHAN, 800);
-            delay(8);
-            ledcWrite(BUZZER_CHAN, 0);
-        }
-        else
-        {
-            // "Хвилька": динамічний слайд частоти вгору залежно від супутників
-            // Базова частота росте від кількості супутників (наприклад, 1200 Гц + sats * 150)
-            int startFreq = 1200 + (satsCount * 120);
-            if (startFreq > 4000)
-                startFreq = 4000; // Обмежувач для вух
-
-            // Мікро-слайд для ефекту "хвилі" (генерація звуку Alien Tracker)
-            ledcWriteTone(BUZZER_CHAN, startFreq);
-            delay(12);
-            ledcWriteTone(BUZZER_CHAN, startFreq + 400); // Стрибок вгору в кінці імпульсу
-            delay(8);
-            ledcWrite(BUZZER_CHAN, 0);
-        }
-    }
 }

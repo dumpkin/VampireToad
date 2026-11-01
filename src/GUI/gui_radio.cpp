@@ -3,12 +3,11 @@
 #include "gui_core.h"
 #include "mod_radio.h"
 #include "mod_sound.h"
+#include "mod_buttons.h"
 #include <Arduino_GFX_Library.h>
-#include <SparkFunSX1509.h>
 
 
 extern Arduino_GFX *gfx;
-extern SX1509 io;
 
 namespace GUI {
     uint32_t currentRadioFreq = 561U;
@@ -16,19 +15,38 @@ namespace GUI {
     uint32_t rxMediaFmFreq = 10150U;
     uint32_t rxMediaAmFreq = 1000U;
     int currentVolume = 45;
+    static constexpr int RADIO_VOLUME_STEP = 5;
 
-    int freqDigits[5] = {0, 5, 6, 1, 0};
-    int activeDigitIdx = 0;
+    uint32_t enteredFrequency = 0;
+    uint8_t frequencyCursor = 0;
     bool isEditingFreq = false;
     bool radioModeArk = true;
     bool receiverModulationFm = true;
 
-    unsigned long lastCursorBlink = 0;
-    bool cursorState = true;
-
     static constexpr unsigned long CLICK_RELEASE_MS = 500UL;
 
     // No long-press flags here — menu-style short-click behavior only
+
+    uint8_t frequencyDigitCount()
+    {
+        return radioModeArk ? 4 : 5;
+    }
+
+    uint32_t frequencyDigitPlace(uint8_t cursor)
+    {
+        uint32_t place = 1;
+        for (uint8_t index = cursor + 1; index < frequencyDigitCount(); ++index) {
+            place *= 10U;
+        }
+        return place;
+    }
+
+    bool isFrequencyInRange(uint32_t frequency)
+    {
+        if (radioModeArk) return frequency >= 100U && frequency <= 1150U;
+        if (receiverModulationFm) return frequency >= 6400U && frequency <= 10800U;
+        return frequency >= 520U && frequency <= 30000U;
+    }
 
     void applyRadioVolume()
     {
@@ -59,24 +77,12 @@ namespace GUI {
         }
     }
 
-    void prepareEditDigits()
+    void initializeRadio()
     {
-        if (radioModeArk) {
-            activeDigitIdx = 0;
-            freqDigits[0] = (currentRadioFreq / 1000) % 10;
-            freqDigits[1] = (currentRadioFreq / 100) % 10;
-            freqDigits[2] = (currentRadioFreq / 10) % 10;
-            freqDigits[3] = currentRadioFreq % 10;
-            freqDigits[4] = 0;
-        } else {
-            activeDigitIdx = 0;
-            uint32_t v = currentRadioFreq;
-            freqDigits[0] = (v / 10000U) % 10U;
-            freqDigits[1] = (v / 1000U) % 10U;
-            freqDigits[2] = (v / 100U) % 10U;
-            freqDigits[3] = (v / 10U) % 10U;
-            freqDigits[4] = v % 10U;
-        }
+        radioModeArk = true;
+        receiverModulationFm = true;
+        currentRadioFreq = arkFreq;
+        applyRadioSettings();
     }
 
     void drawRadioScreen()
@@ -108,120 +114,163 @@ namespace GUI {
             gfx->print("[RAD:ERR]");
         }
 
-        if (isEditingFreq) {
-            if (millis() - lastCursorBlink > 250) {
-                lastCursorBlink = millis();
-                cursorState = !cursorState;
-            }
-        }
-
         gfx->setTextSize(2);
         gfx->setTextColor(GREEN, BLACK);
         int textY = startY + 30;
+        const uint32_t displayedFrequency = isEditingFreq ? enteredFrequency : currentRadioFreq;
+        const bool frequencyOutOfRange = isEditingFreq &&
+                                         !isFrequencyInRange(displayedFrequency);
 
         if (radioModeArk) {
             int xBase = centerX - 26;
-            gfx->setCursor(xBase, textY);
-            uint32_t value = isEditingFreq ?
-                (uint32_t)freqDigits[0] * 1000U + (uint32_t)freqDigits[1] * 100U +
-                (uint32_t)freqDigits[2] * 10U + (uint32_t)freqDigits[3] : currentRadioFreq;
-            gfx->printf("%04u", value);
+            char digits[5];
+            snprintf(digits, sizeof(digits), "%04u", static_cast<unsigned>(displayedFrequency));
+            for (uint8_t index = 0; index < 4; ++index) {
+                gfx->setTextColor(frequencyOutOfRange ? RED : GREEN, BLACK);
+                gfx->setCursor(xBase + index * 12, textY);
+                gfx->print(digits[index]);
+                if (isEditingFreq && index == frequencyCursor) {
+                    gfx->drawFastHLine(xBase + index * 12, textY + 16, 10, YELLOW);
+                }
+            }
             gfx->setTextSize(1);
             gfx->setCursor(xBase + 52, textY + 11);
             gfx->print("kHz");
-            if (isEditingFreq) {
-                int cursorX = xBase + activeDigitIdx * 12;
-                if (cursorState) gfx->drawFastHLine(cursorX, textY + 17, 8, WHITE);
-            }
         } else {
             int xBase = centerX - 36;
-            uint32_t value = isEditingFreq
-                ? (uint32_t)freqDigits[0] * 10000U + (uint32_t)freqDigits[1] * 1000U +
-                  (uint32_t)freqDigits[2] * 100U + (uint32_t)freqDigits[3] * 10U +
-                  (uint32_t)freqDigits[4]
-                : currentRadioFreq;
-
-            gfx->setCursor(xBase, textY);
-            if (receiverModulationFm) {
-                uint32_t whole = value / 100U;
-                uint32_t frac = value % 100U;
-                gfx->setTextColor(GREEN, BLACK);
-                if (whole < 10U) gfx->printf("0%u", whole); else gfx->printf("%u", whole);
-                gfx->setTextColor(YELLOW, BLACK);
-                gfx->printf("%02u", frac);
-            } else {
-                gfx->setTextColor(GREEN, BLACK);
-                gfx->printf("%05u", value);
+            char digits[6];
+            snprintf(digits, sizeof(digits), "%05u", static_cast<unsigned>(displayedFrequency));
+            for (uint8_t index = 0; index < 5; ++index) {
+                uint16_t color = frequencyOutOfRange ? RED : GREEN;
+                if (!frequencyOutOfRange && receiverModulationFm && index >= 3) {
+                    color = YELLOW;
+                }
+                gfx->setTextColor(color, BLACK);
+                gfx->setCursor(xBase + index * 12, textY);
+                gfx->print(digits[index]);
+                if (isEditingFreq && index == frequencyCursor) {
+                    gfx->drawFastHLine(xBase + index * 12, textY + 16, 10, YELLOW);
+                }
             }
 
             gfx->setTextSize(1);
             gfx->setCursor(xBase + 64, textY + 11);
             gfx->print(receiverModulationFm ? "MHz" : "kHz");
 
-            if (isEditingFreq) {
-                int cursorX = xBase + activeDigitIdx * 12;
-                if (cursorState) gfx->drawFastHLine(cursorX, textY + 17, 8, WHITE);
-            }
         }
 
         gfx->setTextSize(1);
-        gfx->setTextColor(RGB565_DARKGREY, BLACK);
-        gfx->setCursor(18, startY + 72);
-        if (radioModeArk) {
-            gfx->print("BAND: ARK");
+        gfx->setCursor(4, startY + 72);
+        if (isEditingFreq) {
+            gfx->setTextColor(frequencyOutOfRange ? RED : YELLOW, BLACK);
+            if (frequencyOutOfRange) {
+                gfx->print("OUT OF RANGE; * = tune");
+            } else {
+                gfx->print("Digits; a = backspace");
+            }
         } else {
-            gfx->print(receiverModulationFm ? "BAND: RX-MEDIA FM" : "BAND: RX-MEDIA AM");
+            gfx->setTextColor(RGB565_DARKGREY, BLACK);
+            gfx->setCursor(18, startY + 72);
+            if (radioModeArk) {
+                gfx->print("BAND: ARK");
+            } else {
+                gfx->print(receiverModulationFm ? "BAND: RX-MEDIA FM" : "BAND: RX-MEDIA AM");
+            }
         }
 
         drawUniversalFooter();
     }
 
-    void handleRadioButtons(bool upEvent, bool downEvent, bool okEvent, bool backEvent)
+    void handleRadioButtons(const ModuleButtons::Event &event)
     {
-        if (!isEditingFreq) {
-            // current physical states
-            bool upNow = (io.digitalRead(BTN_UP) == LOW);
-            bool downNow = (io.digitalRead(BTN_DOWN) == LOW);
-            bool okNow = (io.digitalRead(BTN_OK) == LOW);
+        const bool click = event.type == ModuleButtons::EventType::CLICK;
+        const bool upEvent = click && event.buttons == ModuleButtons::UP;
+        const bool downEvent = click && event.buttons == ModuleButtons::DOWN;
+        const bool okEvent = click && event.buttons == ModuleButtons::OK;
+        const bool backEvent = click && event.buttons == ModuleButtons::BACK;
 
-            // Combos: Up+OK -> FM/AM toggle (only in RX-MEDIA)
-            if ((upEvent && okNow) || (okEvent && upNow)) {
-                if (!radioModeArk) {
-                    receiverModulationFm = !receiverModulationFm;
-                    currentRadioFreq = receiverModulationFm ? rxMediaFmFreq : rxMediaAmFreq;
+        if (isEditingFreq && event.type == ModuleButtons::EventType::KEY) {
+            if (event.key == 'a') {
+                if (frequencyCursor > 0) {
+                    --frequencyCursor;
+                    const uint32_t place = frequencyDigitPlace(frequencyCursor);
+                    const uint32_t digit = (enteredFrequency / place) % 10U;
+                    enteredFrequency -= digit * place;
+                    ModuleSound::play(ModuleSound::SFX_BACK);
+                }
+            } else if (event.key >= '0' && event.key <= '9' &&
+                       frequencyCursor < frequencyDigitCount()) {
+                const uint32_t place = frequencyDigitPlace(frequencyCursor);
+                const uint32_t previousDigit = (enteredFrequency / place) % 10U;
+                enteredFrequency = enteredFrequency - previousDigit * place +
+                                   static_cast<uint32_t>(event.key - '0') * place;
+                ++frequencyCursor;
+                ModuleSound::play(ModuleSound::SFX_CLICK);
+            }
+            return;
+        }
+
+        if (isEditingFreq) {
+            if (backEvent) {
+                isEditingFreq = false;
+                ModuleSound::play(ModuleSound::SFX_BACK);
+            } else if (okEvent) {
+                if (isFrequencyInRange(enteredFrequency)) {
+                    currentRadioFreq = enteredFrequency;
+                    if (radioModeArk) arkFreq = currentRadioFreq;
+                    else if (receiverModulationFm) rxMediaFmFreq = currentRadioFreq;
+                    else rxMediaAmFreq = currentRadioFreq;
+                    isEditingFreq = false;
                     applyRadioSettings();
                     ModuleSound::play(ModuleSound::SFX_OK);
-                    return;
                 }
             }
+            return;
+        }
 
-            // Down+OK -> ARK <-> RX-MEDIA
-            if ((downEvent && okNow) || (okEvent && downNow)) {
-                radioModeArk = !radioModeArk;
-                currentRadioFreq = radioModeArk ? arkFreq : rxMediaFmFreq;
+        if (!isEditingFreq) {
+            if (event.type == ModuleButtons::EventType::KEY && event.key == 'a') {
+                if (radioModeArk) {
+                    radioModeArk = false;
+                    receiverModulationFm = false;
+                    currentRadioFreq = rxMediaAmFreq;
+                } else {
+                    radioModeArk = true;
+                    currentRadioFreq = arkFreq;
+                }
+                applyRadioSettings();
+                ModuleSound::play(ModuleSound::SFX_OK);
+                return;
+            }
+
+            if (event.type == ModuleButtons::EventType::KEY && event.key == 'b') {
+                radioModeArk = false;
+                receiverModulationFm = true;
+                currentRadioFreq = rxMediaFmFreq;
                 applyRadioSettings();
                 ModuleSound::play(ModuleSound::SFX_OK);
                 return;
             }
 
             // Single short clicks
-            if (upEvent && !okNow && !downNow && !backEvent) {
-                currentVolume = constrain(currentVolume - 1, 0, 63);
+            if (upEvent) {
+                currentVolume = constrain(currentVolume - RADIO_VOLUME_STEP, 0, 63);
                 applyRadioVolume();
                 ModuleSound::play(ModuleSound::SFX_CLICK);
                 return;
             }
 
-            if (downEvent && !okNow && !upNow && !backEvent) {
-                currentVolume = constrain(currentVolume + 1, 0, 63);
+            if (downEvent) {
+                currentVolume = constrain(currentVolume + RADIO_VOLUME_STEP, 0, 63);
                 applyRadioVolume();
                 ModuleSound::play(ModuleSound::SFX_CLICK);
                 return;
             }
 
-            if (okEvent && !upNow && !downNow && !backEvent) {
+            if (okEvent) {
                 isEditingFreq = true;
-                prepareEditDigits();
+                enteredFrequency = currentRadioFreq;
+                frequencyCursor = 0;
                 ModuleSound::play(ModuleSound::SFX_OK);
                 return;
             }
@@ -233,59 +282,6 @@ namespace GUI {
                 currentState = MAIN_MENU;
                 drawMainMenu();
                 return;
-            }
-        }
-        else {
-            if (upEvent) {
-                // Swapped: in edit mode UP decrements the active digit
-                freqDigits[activeDigitIdx] = (freqDigits[activeDigitIdx] - 1 + 10) % 10;
-                ModuleSound::play(ModuleSound::SFX_CLICK);
-            }
-            else if (downEvent) {
-                // Swapped: in edit mode DOWN increments the active digit
-                freqDigits[activeDigitIdx] = (freqDigits[activeDigitIdx] + 1) % 10;
-                ModuleSound::play(ModuleSound::SFX_CLICK);
-            }
-            else if (okEvent) {
-                if (radioModeArk) {
-                    if (activeDigitIdx < 3) {
-                        activeDigitIdx++;
-                    } else {
-                        uint32_t value = static_cast<uint32_t>(freqDigits[0]) * 1000U +
-                                         static_cast<uint32_t>(freqDigits[1]) * 100U +
-                                         static_cast<uint32_t>(freqDigits[2]) * 10U +
-                                         static_cast<uint32_t>(freqDigits[3]);
-                        currentRadioFreq = constrain(value, 100U, 1150U);
-                        arkFreq = currentRadioFreq;
-                        applyRadioSettings();
-                        isEditingFreq = false;
-                        ModuleSound::play(ModuleSound::SFX_OK);
-                    }
-                } else {
-                    if (activeDigitIdx < 4) {
-                        activeDigitIdx++;
-                    } else {
-                        uint32_t value = static_cast<uint32_t>(freqDigits[0]) * 10000U +
-                                         static_cast<uint32_t>(freqDigits[1]) * 1000U +
-                                         static_cast<uint32_t>(freqDigits[2]) * 100U +
-                                         static_cast<uint32_t>(freqDigits[3]) * 10U +
-                                         static_cast<uint32_t>(freqDigits[4]);
-                        if (receiverModulationFm) {
-                            currentRadioFreq = constrain(value, 6400U, 10800U);
-                            rxMediaFmFreq = currentRadioFreq;
-                        } else {
-                            currentRadioFreq = constrain(value, 520U, 30000U);
-                            rxMediaAmFreq = currentRadioFreq;
-                        }
-                        applyRadioSettings();
-                        isEditingFreq = false;
-                        ModuleSound::play(ModuleSound::SFX_OK);
-                    }
-                }
-            }
-            else if (backEvent) {
-                ModuleSound::play(ModuleSound::SFX_BACK);
-                isEditingFreq = false;
             }
         }
     }

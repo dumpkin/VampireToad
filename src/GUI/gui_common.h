@@ -22,7 +22,7 @@ namespace GUI {
     void drawHackerIcons(bool isWiFi, bool animate);
     
     // Сплеш-скрін при завантаженні
-    void drawSplash();
+    void drawSplash(bool keypadReady);
 }
 
 #endif

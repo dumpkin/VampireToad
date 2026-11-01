@@ -9,6 +9,8 @@
 #include "mod_sound.h"
 #include "mod_gy91.h"
 #include "mod_cyber.h"
+#include "mod_buttons.h"
+#include "mod_test.h"
 #include <SparkFunSX1509.h> // Підключаємо роботу з SX1509
 
 
@@ -31,7 +33,7 @@ static unsigned long lastFrameTick = 0;
 
 TaskHandle_t Core0TaskHandle = NULL;
 
-// === ФОНОВА ЗАДАЧА ДЛЯ CORE 0 (Радіо, Сенсори, Навігація) ===
+// === ФОНОВА ЗАДАЧА ДЛЯ CORE 0 (GPS та бездротові модулі) ===
 void TaskCore0(void *pvParameters)
 {
     (void)pvParameters;
@@ -43,15 +45,16 @@ void TaskCore0(void *pvParameters)
         // 1. Фонове вичитування GPS
         while (Serial2.available() > 0)
         {
-            gps.encode(Serial2.read());
+            ModuleGPS::encode(static_cast<char>(Serial2.read()));
         }
 
-        // 2. Оновлення комплементарного фільтра інерціалки
-        ModuleGY91::update();
-
-        // 3. Скидання Dead Reckoning при валідному GPS
+        // 2. Скидання Dead Reckoning при валідному GPS.
+        // Sensor/I2C work is deferred to loop() to keep keypad and sensor I2C access serialized.
         if (gps.location.isValid() && gps.location.isUpdated())
         {
+            ModuleGPS::recordFix(
+                gps.location.lat(),
+                gps.location.lng());
             ModuleGY91::resetDeadReckoning();
         }
 
@@ -103,7 +106,8 @@ void setup()
     ModuleGY91::init(); 
 
     // 3. Старт SX1509 на адресі 0x3E після того, як шина I2C вже активна
-    if (io.begin(0x3E)) {
+    const bool sx1509Ready = io.begin(0x3E);
+    if (sx1509Ready) {
         // НАЛАШТУВАННЯ ТАКТУВАННЯ ДЛЯ Si4735:
         // Для відповідності офіційним прикладам PU2CLR ставимо 32.768 kHz на OSC.
         // oscSource=INTERNAL_CLOCK_2MHZ, oscDivider=1, oscPinFunction=1(OUTPUT), oscFreqOut=6 => 2MHz / 64 = 31.25kHz
@@ -124,7 +128,13 @@ void setup()
     GUI::init();
     ModuleGPS::init();
 
-    // Створення потоку на Core 0
+    GUI::drawSplash(sx1509Ready);
+    if (ModuleTest::test_active) ModuleTest::runKeypadTest();
+    if (sx1509Ready) {
+        ModuleButtons::resetAndIgnore(300UL);
+    }
+
+    // Start background I2C users after the splash keypad scan is complete.
     xTaskCreatePinnedToCore(
         TaskCore0,
         "TaskCore0",
@@ -133,8 +143,6 @@ void setup()
         1,
         &Core0TaskHandle,
         0);
-
-    GUI::drawSplash();
         
     gfx->flush();  // КРИТИЧНО: Виштовхуємо сплеш на дисплей перед drawMainMenu
     GUI::drawMainMenu();
@@ -144,17 +152,20 @@ void loop() {
     // Опитування кнопок з антибрязком
     GUI::checkButtons();
 
+    const unsigned long now = millis();
+    static unsigned long lastSensorUpdateAt = 0;
+    if (now - lastSensorUpdateAt >= 10UL) {
+        lastSensorUpdateAt = now;
+        ModuleGY91::update();
+    }
+
     // Рендеринг інтерфейсу залежно від активного стану операційної системи Penta OS
     switch (GUI::getCurrentState()) {
         case GUI::MAIN_MENU:
             break;
             
-        case GUI::SUB_RADAR:
-            GUI::drawVisualRadarScreen(); 
-            break;
-            
-        case GUI::SUB_COMPASS: 
-            GUI::drawVisualCompass(); 
+        case GUI::SUB_NAVIGATION:
+            GUI::drawNavigationScreen();
             break;
 
         case GUI::SUB_WIFI:
@@ -175,8 +186,8 @@ void loop() {
     }
 
     // Безперервне виштовхування готового Canvas буфера на фізичну матрицю дисплея (30 FPS)
-    if (millis() - lastFrameTick >= 33) {
-        lastFrameTick = millis();
+    if (now - lastFrameTick >= 33) {
+        lastFrameTick = now;
         gfx->flush(); 
     }
 }

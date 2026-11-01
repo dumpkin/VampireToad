@@ -1,4 +1,6 @@
 #include "gui_common.h"
+#include "mod_buttons.h"
+#include "mod_test.h"
 #include "mod_sound.h"
 #include "mod_gps.h"
 #include <Arduino_GFX_Library.h>
@@ -38,6 +40,7 @@ namespace GUI {
     {
         const int potPin = 1; // GPIO 1
         const int samples = 40; 
+        constexpr float VOLTAGE_CALIBRATION_FACTOR = 1.5f;
         
         static float cachedVoltage = 3.6f;
         static unsigned long lastBatteryCheck = 0;
@@ -55,7 +58,8 @@ namespace GUI {
         }
         
         float averageMv = (float)sum / samples;
-        float currentVoltage = (averageMv * 1.2133f) / 1000.0f;
+        float currentVoltage =
+            (averageMv * VOLTAGE_CALIBRATION_FACTOR) / 1000.0f;
 
         if (currentVoltage < 2.0f) currentVoltage = 0.0f;
         
@@ -66,6 +70,7 @@ namespace GUI {
 
     void drawUniversalFooter()
     {
+        gfx->setTextSize(1);
         gfx->drawFastHLine(0, 114, 160, GREEN);
         gfx->fillRect(0, 115, 160, 13, BLACK);
 
@@ -96,7 +101,7 @@ namespace GUI {
         gfx->printf("%.2fV", bV);
     }
 
-    void drawSplash()
+    void drawSplash(bool keypadReady)
     {
         gfx->fillScreen(BLACK);
         gfx->setTextColor(GREEN, BLACK);
@@ -107,6 +112,8 @@ namespace GUI {
         gfx->setTextSize(1);
         gfx->setCursor(44, 65);
         gfx->print("PENTA OS v2.0");
+        gfx->setCursor(20, 82);
+        gfx->print(keypadReady ? "Hold # for keypad test" : "Keypad unavailable");
 
         // КРИТИЧНО: Виштовхуємо canvas на физичний дисплей перед паузою
         gfx->flush();
@@ -116,7 +123,7 @@ namespace GUI {
     ModuleSound::play(ModuleSound::SFX_TOAD_CROAK);
 
     
-        delay(1500);
+        ModuleTest::captureSplashTestRequest(keypadReady, 1500UL);
     }
 
     void drawSubMenuLayout(const char *title)
@@ -134,7 +141,7 @@ namespace GUI {
         gfx->print(title); 
 
         gfx->setCursor(114, 6);
-        gfx->print("EXIT >"); 
+        gfx->print("EXIT #");
     }
 
     void drawHackerIcons(bool isWiFi, bool animate)
