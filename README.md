@@ -88,6 +88,7 @@
 - Radio reset: GPIO10 (пін SX1509 0 зайнятий матрицею)
 - Buzzer: `BUZZER_PIN = 2` (ledc channel 0)
 - Pot / battery ADC: GPIO1
+- Audio analyzer ADC input: GPIO3 (ADC1); connect only an AC-coupled, biased audio signal within 0–3.3 V.
 
 ## Примітки
 - Клавіатурна матриця сканується через піни SX1509; прямі GPIO ESP32 для клавіш не використовуються.
